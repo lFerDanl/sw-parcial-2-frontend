@@ -9,7 +9,6 @@ export const useDiagramPromptGeneration = (
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Configurar listener para errores de generación
   useEffect(() => {
     if (!socket) return;
 
@@ -26,7 +25,11 @@ export const useDiagramPromptGeneration = (
     };
   }, [socket]);
 
-  const generateFromPrompt = async (prompt: string) => {
+  // ✅ Agregar parámetro mode
+  const generateFromPrompt = async (
+    prompt: string, 
+    mode: 'replace' | 'merge' = 'merge' // ✅ Default: merge
+  ) => {
     if (!socket || !diagramId || !prompt.trim()) {
       setError('Faltan datos necesarios para generar');
       return;
@@ -35,25 +38,20 @@ export const useDiagramPromptGeneration = (
     setIsGenerating(true);
     setError(null);
 
-    console.log('📤 Emitiendo solicitud de generación:', { diagramId, prompt });
+    console.log('📤 Emitiendo solicitud de generación:', { diagramId, prompt, mode });
 
-    // Emitir evento al backend
-    console.log('📤 Emitiendo solicitud de generación:', { diagramId, prompt, socket });
+    // ✅ Enviar el modo
     socket.emit('diagram:generateFromPrompt', {
       diagramId,
       prompt: prompt.trim(),
+      mode, // ✅ 'merge' o 'replace'
     });
 
-    // El listener de diagram:generated está en el componente principal
-    // Aquí solo manejamos el estado de loading
-    
-    // Timeout de seguridad (30 segundos)
     const timeout = setTimeout(() => {
       setIsGenerating(false);
       setError('Tiempo de espera agotado. Intenta de nuevo.');
-    }, 30000);
+    }, 60000);
 
-    // Limpiar timeout cuando se reciba respuesta
     const handleSuccess = () => {
       clearTimeout(timeout);
       setIsGenerating(false);

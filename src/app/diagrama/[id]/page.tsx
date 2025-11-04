@@ -1,4 +1,4 @@
-// page.tsx (corregido - movimiento en tiempo real + fix para generación IA)
+// page.tsx
 "use client";
 
 import React, { useRef, useState, useEffect } from "react";
@@ -9,6 +9,7 @@ import { useDiagramClasses } from "@/hooks/useDiagramClasses";
 import { useDiagramRelations } from "@/hooks/useDiagramRelations";
 import { useDiagramPromptGeneration } from "@/hooks/usePromptGeneration";
 import VoiceTextPrompt from "@/app/diagrama/components/voiceTextPromptProps";
+import { useImageGeneration } from "@/hooks/useImageGeneration";
 
 export default function DiagramPage() {
   const params = useParams() as { id?: string };
@@ -46,6 +47,11 @@ export default function DiagramPage() {
   const { socket, isConnected, hasJoined } = useDiagramSocket(diagramId, isInitialized);
   
   const { generateFromPrompt, isGenerating, error } = useDiagramPromptGeneration(
+    diagramId,
+    socket
+  );
+
+  const { generateFromImage, isGenerating: isGeneratingImage, error: imageError } = useImageGeneration(
     diagramId,
     socket
   );
@@ -156,6 +162,10 @@ export default function DiagramPage() {
     });
 
     paper.on('link:connect', function(linkView: any) {
+      if (isLoadingDiagramRef.current) {
+        return;
+      }
+      
       const link = linkView.model;
       const source = link.get('source');
       const target = link.get('target');
@@ -197,6 +207,10 @@ export default function DiagramPage() {
     });
 
     paper.on('link:pointermove link:pointerup', function(linkView: any) {
+      if(isLoadingDiagramRef.current) {
+        return;
+      }
+
       const link = linkView.model;
       
       if (!graph.getCell(link.id)) {
@@ -212,7 +226,6 @@ export default function DiagramPage() {
     });
 
     graph.on('remove', function(cell: any) {
-      // ✅ No emitir eventos remove si estamos cargando un diagrama
       if (isLoadingDiagramRef.current) {
         return;
       }
@@ -260,8 +273,9 @@ export default function DiagramPage() {
       console.log('🔥 Diagrama recibido:', payload);
       const diagram = payload.diagram || payload;
       
-      // ✅ Activar flag de carga
       isLoadingDiagramRef.current = true;
+
+      graph.startBatch('loading');
       
       graph.clear();
 
@@ -455,62 +469,116 @@ export default function DiagramPage() {
       }
     });
 
-    socket.on("diagram:generated", ({ content }: any) => {
-      console.log('🤖 Diagrama generado con IA:', content);
-      
-      // ✅ Activar flag de carga
+    socket.on("diagram:generated", ({ content, mode }: any) => {
+      console.log('🤖 Diagrama generado con IA:', content, 'Modo:', mode);
+    
       isLoadingDiagramRef.current = true;
       
-      graph.clear();
       clearSelection();
-
+    
+      if (mode === 'replace') {
+        graph.clear();
+      }
+      
       Object.entries(content.elements || {}).forEach(([id, elem]: any) => {
-        const element = createClassElement(id, elem);
-        if (element) {
-          graph.addCell(element);
-          updateElementSizeAndLabel(element);
+        const existingCell = graph.getCell(id);
+        
+        if (existingCell) {
+          const data = existingCell.get("classData") || {};
+          const updatedData = {
+            ...data,
+            name: elem.name || data.name,
+            attributes: elem.attributes || data.attributes || []
+          };
+          existingCell.set("classData", updatedData);
+          
+          if (elem.position) {
+            existingCell.position(elem.position.x, elem.position.y);
+          }
+          
+          updateElementSizeAndLabel(existingCell);
+        } else {
+          const element = createClassElement(id, elem);
+          if (element) {
+            graph.addCell(element);
+            updateElementSizeAndLabel(element);
+          }
         }
       });
-
+    
       Object.entries(content.relations || {}).forEach(([rid, rel]: any) => {
-        const displayLabels = rel.labels?.map((label: any) => {
-          if (label.attrs) return label;
-          return {
-            position: label.position || 0.5,
-            attrs: {
-              text: {
-                text: label.text || rel.type || "OneToMany",
-                fontSize: 12,
-                fill: '#333'
+        const existingLink = graph.getCell(rid);
+        
+        if (existingLink && existingLink.isLink()) {
+          existingLink.set('source', { id: rel.from });
+          existingLink.set('target', { id: rel.to });
+          existingLink.set('relationType', rel.type || 'OneToMany');
+          existingLink.set('vertices', rel.vertices || []);
+          existingLink.attr(rel.attrs || getRelationStyle(rel.type || 'OneToMany'));
+          
+          const displayLabels = rel.labels?.map((label: any) => {
+            if (label.attrs) return label;
+            return {
+              position: label.position || 0.5,
+              attrs: {
+                text: {
+                  text: label.text || rel.type || "OneToMany",
+                  fontSize: 12,
+                  fill: '#333'
+                }
               }
-            }
-          };
-        }) || [{ 
-          position: 0.5, 
-          attrs: { 
-            text: { 
-              text: rel.type || "OneToMany", 
-              fontSize: 12, 
-              fill: '#333' 
+            };
+          }) || [{ 
+            position: 0.5, 
+            attrs: { 
+              text: { 
+                text: rel.type || "OneToMany", 
+                fontSize: 12, 
+                fill: '#333' 
+              } 
             } 
-          } 
-        }];
-
-        const link = new dia.Link({
-          id: rid,
-          source: { id: rel.from },
-          target: { id: rel.to },
-          vertices: rel.vertices || [],
-          labels: displayLabels,
-          attrs: rel.attrs || getRelationStyle(rel.type || 'OneToMany'),
-          router: rel.router || { name: "manhattan" },
-          connector: rel.connector || { name: "rounded" }
-        });
-        link.set('relationType', rel.type || 'OneToMany');
-        graph.addCell(link);
+          }];
+          
+          existingLink.set('labels', displayLabels);
+        } else if (!existingLink) {
+          const displayLabels = rel.labels?.map((label: any) => {
+            if (label.attrs) return label;
+            return {
+              position: label.position || 0.5,
+              attrs: {
+                text: {
+                  text: label.text || rel.type || "OneToMany",
+                  fontSize: 12,
+                  fill: '#333'
+                }
+              }
+            };
+          }) || [{ 
+            position: 0.5, 
+            attrs: { 
+              text: { 
+                text: rel.type || "OneToMany", 
+                fontSize: 12, 
+                fill: '#333' 
+              } 
+            } 
+          }];
+    
+          const link = new dia.Link({
+            id: rid,
+            source: { id: rel.from },
+            target: { id: rel.to },
+            vertices: rel.vertices || [],
+            labels: displayLabels,
+            attrs: rel.attrs || getRelationStyle(rel.type || 'OneToMany'),
+            router: rel.router || { name: "manhattan" },
+            connector: rel.connector || { name: "rounded" }
+          });
+          link.set('relationType', rel.type || 'OneToMany');
+          graph.addCell(link);
+        }
       });
       
-      // ✅ Desactivar flag después de un pequeño delay
       setTimeout(() => {
         isLoadingDiagramRef.current = false;
       }, 100);
@@ -586,6 +654,33 @@ export default function DiagramPage() {
     }
   };
 
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+  
+    // Validar que sea imagen
+    if (!file.type.startsWith('image/')) {
+      alert('Por favor selecciona un archivo de imagen válido');
+      return;
+    }
+  
+    const additionalPrompt = window.prompt(
+      'Contexto adicional (opcional):\nEjemplo: "Este es un sistema de gestión de biblioteca"',
+      ''
+    );
+  
+    const mode = window.confirm(
+      '¿Quieres AGREGAR al diagrama existente?\n\n' +
+      'OK = Agregar (merge)\n' +
+      'Cancelar = Reemplazar todo (replace)'
+    ) ? 'merge' : 'replace';
+  
+    await generateFromImage(file, additionalPrompt || '', mode);
+    
+    // Limpiar el input para permitir cargar la misma imagen de nuevo
+    event.target.value = '';
+  };
+
   const handleGenerateSpringBoot = async () => {
     if (!diagramId) {
       alert('No hay diagrama seleccionado');
@@ -657,11 +752,28 @@ export default function DiagramPage() {
         >
           📦 Generar Spring Boot
         </button>
+
+        <label className="px-4 py-2 bg-purple-500 text-white border border-purple-600 rounded hover:bg-purple-600 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+          <input
+            type="file"
+            accept="image/*"
+            onChange={handleImageUpload}
+            disabled={!isConnected || !hasJoined || isGeneratingImage}
+            className="hidden"
+          />
+          {isGeneratingImage ? '⏳ Procesando...' : '🖼️ Generar desde Imagen'}
+        </label>
       </div>
 
       {error && (
         <div className="absolute top-16 left-4 z-20 bg-red-100 border border-red-300 rounded px-3 py-2 text-sm max-w-md">
           <strong>Error:</strong> {error}
+        </div>
+      )}
+
+      {imageError && (
+        <div className="absolute top-28 left-4 z-20 bg-red-100 border border-red-300 rounded px-3 py-2 text-sm max-w-md">
+          <strong>Error (Imagen):</strong> {imageError}
         </div>
       )}
 
