@@ -20,7 +20,7 @@ export default function DiagramPage() {
   const selectedRelationRef = useRef<any | null>(null);
   const createClassModeRef = useRef(false);
   const removedCellsRef = useRef<Set<string>>(new Set());
-  const isLoadingDiagramRef = useRef(false); // ✅ Flag para evitar emitir removes durante la carga
+  const isLoadingDiagramRef = useRef(false);
   
   const [createClassMode, setCreateClassMode] = useState(false);
   const [selectedElement, setSelectedElement] = useState<any | null>(null);
@@ -46,12 +46,17 @@ export default function DiagramPage() {
   const { joint, graphRef, paperInstanceRef, shapesRef, isInitialized } = useJointJS(paperRef);
   const { socket, isConnected, hasJoined } = useDiagramSocket(diagramId, isInitialized);
   
-  const { generateFromPrompt, isGenerating, error } = useDiagramPromptGeneration(
+  const { generateFromPrompt, isGenerating, generatingMessage, error } = useDiagramPromptGeneration(
     diagramId,
     socket
   );
 
-  const { generateFromImage, isGenerating: isGeneratingImage, error: imageError } = useImageGeneration(
+  const { 
+    generateFromImage, 
+    isGenerating: isGeneratingImage, 
+    generatingMessage: generatingImageMessage,
+    error: imageError 
+  } = useImageGeneration(
     diagramId,
     socket
   );
@@ -693,6 +698,13 @@ export default function DiagramPage() {
     const basePackage = window.prompt('Paquete base (ej: com.example.demo):', 'com.example.demo');
     if (!basePackage) return;
   
+    // Validar formato del paquete
+    const packageRegex = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$/;
+    if (!packageRegex.test(basePackage)) {
+      alert('❌ Formato de paquete inválido.\nUsa el formato: com.example.demo (solo minúsculas, números y puntos)');
+      return;
+    }
+  
     try {
       const params = new URLSearchParams({
         projectName,
@@ -717,15 +729,139 @@ export default function DiagramPage() {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
   
-      alert('✅ Código Spring Boot generado exitosamente');
+      alert(
+        `✅ Código Spring Boot generado exitosamente!\n\n` +
+        `📦 Proyecto: ${projectName}\n` +
+        `📦 Paquete: ${basePackage}\n\n` +
+        `Pasos siguientes:\n` +
+        `1. Descomprime el archivo ZIP\n` +
+        `2. Ejecuta: setup.bat (Windows) o ./setup.sh (Linux/Mac)\n` +
+        `3. O manualmente: mvn clean install && mvn spring-boot:run`
+      );
     } catch (error) {
       console.error('Error generando código:', error);
       alert('❌ Error al generar el código Spring Boot');
     }
   };
+  
+  const handleGenerateFlutter = async () => {
+    if (!diagramId) {
+      alert('No hay diagrama seleccionado');
+      return;
+    }
+  
+    const projectName = window.prompt(
+      'Nombre del proyecto Flutter:\n(solo letras, números y guiones bajos)',
+      `diagram_${diagramId}_app`
+    );
+    
+    if (!projectName) return;
+  
+    // Validar y normalizar nombre del proyecto
+    const normalizedName = projectName
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .replace(/_{2,}/g, '_'); // Eliminar múltiples guiones bajos consecutivos
+  
+    if (normalizedName !== projectName) {
+      const confirmNormalized = window.confirm(
+        `El nombre será normalizado a: "${normalizedName}"\n\n` +
+        `Flutter requiere nombres en snake_case (solo letras minúsculas, números y guiones bajos).\n\n` +
+        `¿Continuar con este nombre?`
+      );
+      if (!confirmNormalized) return;
+    }
+  
+    const basePackage = window.prompt(
+      'Paquete base (ej: com.example.app):', 
+      'com.example.app'
+    );
+    
+    if (!basePackage) return;
+  
+    // Validar formato del paquete
+    const packageRegex = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$/;
+    if (!packageRegex.test(basePackage)) {
+      alert('❌ Formato de paquete inválido.\nUsa el formato: com.example.app (solo minúsculas, números y puntos)');
+      return;
+    }
+  
+    try {
+      const params = new URLSearchParams({
+        projectName: normalizedName,
+        basePackage
+      });
+  
+      const response = await fetch(`/api/diagrams/${diagramId}/generate-flutter?${params}`, {
+        method: 'POST',
+      });
+  
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
+        throw new Error(errorData.error || errorData.details || 'Error al generar el código');
+      }
+  
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${normalizedName}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+  
+      alert(
+        `✅ Código Flutter generado exitosamente!\n\n` +
+        `📱 Proyecto: ${normalizedName}\n` +
+        `📦 Paquete: ${basePackage}\n\n` +
+        `Pasos siguientes:\n` +
+        `1. Descomprime el archivo ZIP\n` +
+        `2. cd ${normalizedName}\n` +
+        `3. flutter pub get\n` +
+        `4. Configura .env con tu API backend\n` +
+        `5. flutter run`
+      );
+    } catch (error) {
+      console.error('Error generando código Flutter:', error);
+      alert(`❌ Error al generar el código Flutter:\n\n${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
 
   return (
     <main className="flex w-full h-screen">
+            {(isGenerating || isGeneratingImage) && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md mx-4">
+            <div className="flex flex-col items-center space-y-4">
+              {/* Spinner animado */}
+              <div className="relative">
+                <div className="w-16 h-16 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+              </div>
+              
+              {/* Mensaje de progreso */}
+              <div className="text-center">
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  {isGenerating ? '🤖 Generando diagrama...' : '🖼️ Procesando imagen...'}
+                </h3>
+                <p className="text-sm text-gray-600">
+                  {generatingMessage || generatingImageMessage || 'Esto puede tomar hasta 30 segundos'}
+                </p>
+              </div>
+
+              {/* Indicador de progreso visual */}
+              <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                <div className="h-full bg-blue-600 rounded-full animate-pulse" style={{ width: '70%' }}></div>
+              </div>
+
+              <p className="text-xs text-gray-500 text-center">
+                No cierres esta ventana
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="absolute top-4 left-4 z-20 flex gap-2 bg-white p-2 rounded shadow border">
         <button 
           className={`px-4 py-2 border rounded transition-colors ${
@@ -737,6 +873,19 @@ export default function DiagramPage() {
         >
           {createClassMode ? "✓ Crear Clase (Activo)" : "Crear Clase"}
         </button>
+
+        <label className={`px-4 py-2 bg-purple-500 text-white border border-purple-600 rounded hover:bg-purple-600 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+          (!isConnected || !hasJoined || isGeneratingImage || isGenerating) ? 'opacity-50 cursor-not-allowed' : ''
+        }`}>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={handleImageUpload}
+            disabled={!isConnected || !hasJoined || isGeneratingImage || isGenerating}
+            className="hidden"
+          />
+          {isGeneratingImage ? '⏳ Procesando...' : '🖼️ Imagen'}
+        </label>
         
         {/* Componente de Voz y Texto */}
         <VoiceTextPrompt
@@ -744,36 +893,61 @@ export default function DiagramPage() {
           isGenerating={isGenerating}
           disabled={!isConnected || !hasJoined}
         />
+        {/* Botón Spring Boot */}
         <button
           className="px-4 py-2 bg-green-500 text-white border border-green-600 rounded hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           onClick={handleGenerateSpringBoot}
-          disabled={!isConnected || !hasJoined}
-          title={!isConnected || !hasJoined ? "Esperando conexión..." : "Generar proyecto Spring Boot"}
+          disabled={!isConnected || !hasJoined || isGenerating || isGeneratingImage}
+          title={
+            !isConnected || !hasJoined 
+              ? "Esperando conexión..." 
+              : isGenerating || isGeneratingImage
+              ? "Generación en proceso..."
+              : "Generar proyecto Spring Boot"
+          }
         >
-          📦 Generar Spring Boot
+          📦 Spring Boot
         </button>
 
-        <label className="px-4 py-2 bg-purple-500 text-white border border-purple-600 rounded hover:bg-purple-600 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-          <input
-            type="file"
-            accept="image/*"
-            onChange={handleImageUpload}
-            disabled={!isConnected || !hasJoined || isGeneratingImage}
-            className="hidden"
-          />
-          {isGeneratingImage ? '⏳ Procesando...' : '🖼️ Generar desde Imagen'}
-        </label>
+        {/* Botón Flutter */}
+        <button
+          className="px-4 py-2 bg-cyan-500 text-white border border-cyan-600 rounded hover:bg-cyan-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={handleGenerateFlutter}
+          disabled={!isConnected || !hasJoined || isGenerating || isGeneratingImage}
+          title={
+            !isConnected || !hasJoined 
+              ? "Esperando conexión..." 
+              : isGenerating || isGeneratingImage
+              ? "Generación en proceso..."
+              : "Generar proyecto Flutter"
+          }
+        >
+          📱 Flutter
+        </button>
+
       </div>
 
       {error && (
-        <div className="absolute top-16 left-4 z-20 bg-red-100 border border-red-300 rounded px-3 py-2 text-sm max-w-md">
-          <strong>Error:</strong> {error}
+        <div className="absolute top-16 left-4 z-20 bg-red-100 border border-red-400 rounded-lg px-4 py-3 text-sm max-w-md shadow-lg">
+          <div className="flex items-start">
+            <span className="text-red-500 mr-2">⚠️</span>
+            <div>
+              <strong className="font-semibold">Error en generación:</strong>
+              <p className="mt-1">{error}</p>
+            </div>
+          </div>
         </div>
       )}
 
       {imageError && (
-        <div className="absolute top-28 left-4 z-20 bg-red-100 border border-red-300 rounded px-3 py-2 text-sm max-w-md">
-          <strong>Error (Imagen):</strong> {imageError}
+        <div className="absolute top-28 left-4 z-20 bg-red-100 border border-red-400 rounded-lg px-4 py-3 text-sm max-w-md shadow-lg">
+          <div className="flex items-start">
+            <span className="text-red-500 mr-2">⚠️</span>
+            <div>
+              <strong className="font-semibold">Error en imagen:</strong>
+              <p className="mt-1">{imageError}</p>
+            </div>
+          </div>
         </div>
       )}
 
@@ -783,12 +957,26 @@ export default function DiagramPage() {
         </div>
       )}
 
+      {(!isConnected || !hasJoined) && (
+        <div className="absolute bottom-4 right-4 z-20 bg-yellow-100 border border-yellow-400 rounded-lg px-4 py-2 text-sm shadow-lg">
+          <div className="flex items-center space-x-2">
+            <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></div>
+            <span className="font-medium">
+              {!isConnected ? 'Conectando...' : 'Uniéndose al diagrama...'}
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="relative w-full h-screen p-4">
         {(!isInitialized || !hasJoined) && (
           <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center bg-white/80 z-10">
-            <span className="text-gray-500">
-              {!isInitialized ? "Inicializando canvas..." : "Conectando al diagrama..."}
-            </span>
+            <div className="text-center">
+              <div className="w-12 h-12 border-4 border-gray-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4"></div>
+              <span className="text-gray-500">
+                {!isInitialized ? "Inicializando canvas..." : "Conectando al diagrama..."}
+              </span>
+            </div>
           </div>
         )}
         <div
@@ -799,7 +987,9 @@ export default function DiagramPage() {
             border: "1px solid #e5e7eb", 
             borderRadius: 6, 
             background: "#fff",
-            cursor: createClassMode ? "copy" : "default"
+            cursor: createClassMode ? "copy" : "default",
+            opacity: (isGenerating || isGeneratingImage) ? 0.5 : 1,
+            pointerEvents: (isGenerating || isGeneratingImage) ? 'none' : 'auto'
           }}
         />
       </div>

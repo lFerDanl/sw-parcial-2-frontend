@@ -8,25 +8,6 @@ const Dashboard = () => {
 
     console.log(session?.user?.token);
 
-    const getCats = async () => {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/cats`, {
-            method: "GET",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${session?.user?.token}`,
-            },
-        });
-        const data = await res.json();
-        console.log(data);
-    };
-
-    const router = useRouter(); // Obtienes el objeto router
-
-    const handleRedirect = () => {
-        // Redirigir a la ruta '/canvas'
-        router.push("/diagrama/canvas");
-    };
-
     return (
         <div className="min-h-screen bg-gray-400">
             {/* Menu Lateral */}

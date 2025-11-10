@@ -79,7 +79,7 @@ export default function Tabla() {
     };
 
     fetchDiagrams();
-  }, [session]); // 📌 dependemos de session para asegurar token
+  }, [session]); 
 
   const handleRedirect = (id: string) => {
     window.location.href = `/diagrama/${id}`;
