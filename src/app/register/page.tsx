@@ -33,7 +33,13 @@ const RegisterPage = () => {
     const responseAPI = await res.json();
 
     if (!res.ok) {
-      setErrors(responseAPI.message);
+      if(Array.isArray(responseAPI.message)){
+        setErrors(responseAPI.message);
+      }else if (typeof responseAPI.message === "string"){
+        setErrors([responseAPI.message]);
+      }else{
+        setErrors(["An error ocurred"]);
+      }
       return;
     }
 
